@@ -6,6 +6,8 @@ pub fn main() !void {
     var debugAllocator = std.heap.GeneralPurposeAllocator(.{}).init;
     defer std.debug.assert(debugAllocator.deinit() == .ok);
     const alloc = debugAllocator.allocator();
-    var server = try salamShell.initSalamShellServer(alloc);
-    server.deinit();
+    var server = try salamShell.initSalamShellServer(alloc, 2222);
+    defer server.deinit();
+    try server.listen();
+    errdefer server.deinit();
 }

@@ -2,7 +2,7 @@
 const std = @import("std");
 const SalamShell = @import("salamShell/salamShell.zig");
 
-pub fn initSalamShellServer(alloc: std.mem.Allocator) !SalamShell.Server {
-    const server = try SalamShell.Server.init(alloc);
+pub fn initSalamShellServer(alloc: std.mem.Allocator, port: ?u16) !SalamShell.Server {
+    const server = try SalamShell.Server.init(alloc, port);
     return server;
 }
