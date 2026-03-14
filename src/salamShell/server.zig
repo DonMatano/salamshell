@@ -56,8 +56,6 @@ pub fn deinit(self: *Server) void {
 
 pub fn listen(self: *Server) !void {
     const net = std.net;
-    var readBuffer: [4096]u8 = undefined;
-    var writeBuffer: [4096]u8 = undefined;
     const address = try net.Address.parseIp("127.0.0.1", self.port);
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();
@@ -68,36 +66,48 @@ pub fn listen(self: *Server) !void {
     log.info("SSH server started and listening at port: {d}", .{self.port});
     while (true) {
         const conn = try server.accept();
-        var stream = conn.stream;
-        defer {
-            stream.close();
-        }
-        var sr = stream.reader(&readBuffer);
-        const reader = &sr.file_reader.interface;
-        var wr = stream.writer(&writeBuffer);
-        const writer = &wr.interface;
-        writeProtocolVersionExchange("salamaShell_0.0.1", writer) catch |err| {
-            log.err("Got Error with version exchange: {}\n", .{err});
-            stream.close();
-            return err;
-        };
-        try readClientVersion(reader, writer);
-        const ssh = try readPacket(reader, self.arenaAlloc());
+        const thread = try std.Thread.spawn(.{}, handleConnection, .{ self, conn });
+        thread.detach();
+    }
+}
+
+pub fn handleConnection(self: *Server, connection: std.net.Server.Connection) !void {
+    var stream = connection.stream;
+    var readBuffer: [4096]u8 = undefined;
+    var writeBuffer: [4096]u8 = undefined;
+    var arena = std.heap.ArenaAllocator.init(self.arenaAlloc());
+    defer arena.deinit();
+    defer {
+        stream.close();
+    }
+    var sr = stream.reader(&readBuffer);
+    const reader = &sr.file_reader.interface;
+    var wr = stream.writer(&writeBuffer);
+    const writer = &wr.interface;
+    writeProtocolVersionExchange("salamaShell_0.0.1", writer) catch |err| {
+        log.err("Got Error with version exchange: {}\n", .{err});
+        stream.close();
+        return err;
+    };
+    try readClientVersion(reader, writer);
+    while (true) {
+        const ssh = try readPacket(reader, arena.allocator());
         std.log.debug("ssh: {f}", .{ssh});
         // First byte is the msg code.
         const ssh_message = try getSSHMessageFromPayload(ssh.payload[0]);
         var r = IoReader.fixed(ssh.payload[1..]);
-        try self.handleMessage(ssh_message, &r, writer);
+        try self.handleMessage(ssh_message, &r, writer, arena.allocator());
     }
 }
 /// Handle a message. Reader should not include the message code
-fn handleMessage(self: *Server, message_code: types.SSH_MSG, reader: *IoReader, writer: *IoWriter) !void {
+fn handleMessage(self: *Server, message_code: types.SSH_MSG, reader: *IoReader, writer: *IoWriter, alloc: Alloc) !void {
+    _ = self;
     _ = writer;
     switch (message_code) {
         .kexinit => {
-            const kex_pay = try message_handlers.handleKexInit(reader, self.arenaAlloc());
+            const kex_pay = try message_handlers.handleKexInit(reader, alloc);
             log.info("Kex payload: \n{f}", .{kex_pay});
-            log.info("Client ex supported {s}", .{try kex_pay.kex_algorithms.getFormatSendableNameList(self.arenaAlloc())});
+            log.info("Client ex supported {s}", .{try kex_pay.kex_algorithms.getFormatSendableNameList(alloc)});
         },
         else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }
