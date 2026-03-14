@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types.zig");
+const message_handlers = @import("message_handlers.zig");
 const Alloc = std.mem.Allocator;
 
 const Server = @This();
@@ -7,6 +8,26 @@ const Server = @This();
 alloc: Alloc,
 arena: std.heap.ArenaAllocator,
 port: u16,
+supported_kex_algo: types.NameList = .{
+    .names = &.{"mlkem768x25519-sha256"},
+    .length = 0, //FIXME: look how we can add this better.
+},
+supported_host_algo: types.NameList = .{
+    .names = &.{"ssh-ed25519"},
+    .length = 0, //Fix Me! look how we can add this.
+},
+supported_encryption_algo: types.NameList = .{
+    .names = &.{"chacha20-poly1305@openssh.com"},
+    .length = 0, //FIXME: look how we can add this better.
+},
+supported_mac_algo: types.NameList = .{
+    .names = &.{"hmac-sha2-256"},
+    .length = 0, //FIXME: look how we can add this better.
+},
+supported_compression_algo: types.NameList = .{
+    .names = &.{"none"},
+    .length = 0, //FIXME: look how we can add this better.
+},
 
 const log = std.log.scoped(.SalamaShellServer);
 const IoWriter = std.Io.Writer;
@@ -63,13 +84,45 @@ pub fn listen(self: *Server) !void {
         try readClientVersion(reader, writer);
         const ssh = try readPacket(reader, self.arenaAlloc());
         std.log.debug("ssh: {f}", .{ssh});
-        try readPayload(ssh.payload);
+        // First byte is the msg code.
+        const ssh_message = try getSSHMessageFromPayload(ssh.payload[0]);
+        var r = IoReader.fixed(ssh.payload[1..]);
+        try self.handleMessage(ssh_message, &r, writer);
+    }
+}
+/// Handle a message. Reader should not include the message code
+fn handleMessage(self: *Server, message_code: types.SSH_MSG, reader: *IoReader, writer: *IoWriter) !void {
+    _ = writer;
+    switch (message_code) {
+        .kexinit => {
+            const kex_pay = try message_handlers.handleKexInit(reader, self.arenaAlloc());
+            log.info("Kex payload: \n{f}", .{kex_pay});
+            log.info("Client ex supported {s}", .{try kex_pay.kex_algorithms.getFormatSendableNameList(self.arenaAlloc())});
+        },
+        else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }
 }
 
 fn writeProtocolVersionExchange(software_version: []const u8, writer: *IoWriter) !void {
     try writer.print("SSH-2.0-{s} This is still WIP product\r\n", .{software_version});
     try writer.flush();
+}
+
+// fn writeKexInit(self: *Server, writer: *IoWriter) !void {
+//     writer.writeAll(kk)
+//
+//
+//
+// }
+
+fn getCookie(cookie: *[16]u8) !void {
+    std.crypto.random.bytes(cookie);
+}
+
+fn writeNameList(name_list: types.NameList, writer: *IoWriter, alloc: Alloc) !void {
+    const sendable_name_list = try name_list.getFormatSendableNameList(alloc);
+    try writer.writeInt(u32, sendable_name_list.len, .big);
+    try writer.writeAll(sendable_name_list);
 }
 
 fn readClientVersion(reader: *IoReader, writer: *IoWriter) !void {
@@ -112,15 +165,13 @@ fn readPacket(reader: *IoReader, alloc: Alloc) !types.SshPacket {
     // log.info("rem {s}", .{rem});
     return .{
         .payload = payload,
-        .padding = randomPadding,
         .packet_length = packetLength,
         .padding_length = paddingLength,
     };
 }
 
-fn readPayload(payload: []const u8) !void {
-    var reader = std.Io.Reader.fixed(payload);
-
-    const msg = try reader.takeByte();
-    log.info("msg {d}", .{msg});
+fn getSSHMessageFromPayload(msg_byte: u8) !types.SSH_MSG {
+    const mess: types.SSH_MSG = @enumFromInt(msg_byte);
+    log.info("msg {s}", .{@tagName(mess)});
+    return mess;
 }
