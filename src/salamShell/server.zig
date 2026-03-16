@@ -28,6 +28,10 @@ supported_compression_algo: types.NameList = .{
     .names = &.{"none"},
     .length = 0, //FIXME: look how we can add this better.
 },
+supported_languages: types.NameList = .{
+    .names = &.{},
+    .length = 0,
+},
 
 const log = std.log.scoped(.SalamaShellServer);
 const IoWriter = std.Io.Writer;
@@ -73,16 +77,16 @@ pub fn listen(self: *Server) !void {
 
 pub fn handleConnection(self: *Server, connection: std.net.Server.Connection) !void {
     var stream = connection.stream;
-    var readBuffer: [4096]u8 = undefined;
-    var writeBuffer: [4096]u8 = undefined;
     var arena = std.heap.ArenaAllocator.init(self.arenaAlloc());
     defer arena.deinit();
     defer {
         stream.close();
     }
-    var sr = stream.reader(&readBuffer);
+    const readBuffer = try arena.allocator().alloc(u8, 4096);
+    const writeBuffer = try arena.allocator().alloc(u8, 4096);
+    var sr = stream.reader(readBuffer);
     const reader = &sr.file_reader.interface;
-    var wr = stream.writer(&writeBuffer);
+    var wr = stream.writer(writeBuffer);
     const writer = &wr.interface;
     writeProtocolVersionExchange("salamaShell_0.0.1", writer) catch |err| {
         log.err("Got Error with version exchange: {}\n", .{err});
@@ -90,6 +94,8 @@ pub fn handleConnection(self: *Server, connection: std.net.Server.Connection) !v
         return err;
     };
     try readClientVersion(reader, writer);
+    const kex_init_payload = try self.sendKexInit(writer, arena.allocator());
+    log.info("kex_init_payload: \n{s}", .{kex_init_payload});
     while (true) {
         const ssh = try readPacket(reader, arena.allocator());
         std.log.debug("ssh: {f}", .{ssh});
@@ -118,20 +124,40 @@ fn writeProtocolVersionExchange(software_version: []const u8, writer: *IoWriter)
     try writer.flush();
 }
 
-// fn writeKexInit(self: *Server, writer: *IoWriter) !void {
-//     writer.writeAll(kk)
-//
-//
-//
-// }
-
-fn getCookie(cookie: *[16]u8) !void {
+fn sendKexInit(self: *Server, writer: *IoWriter, alloc: Alloc) ![]const u8 {
+    _ = writer;
+    var wr_allocating = IoWriter.Allocating.init(alloc);
+    // var string = try std.ArrayList(u8).initCapacity(wr_allocating.allocator, 4096);
+    // errdefer string.deinit(alloc);
+    var wr = wr_allocating.writer;
+    try wr.writeByte(@intCast(@intFromEnum(types.SSH_MSG.kexinit)));
+    var cookie: [16]u8 = undefined;
+    getCookie(&cookie);
+    try wr.writeAll(&cookie);
+    try writeNameList(self.supported_kex_algo, &wr, alloc);
+    try writeNameList(self.supported_host_algo, &wr, alloc);
+    try writeNameList(self.supported_encryption_algo, &wr, alloc);
+    try writeNameList(self.supported_encryption_algo, &wr, alloc);
+    try writeNameList(self.supported_mac_algo, &wr, alloc);
+    try writeNameList(self.supported_mac_algo, &wr, alloc);
+    try writeNameList(self.supported_compression_algo, &wr, alloc);
+    try writeNameList(self.supported_compression_algo, &wr, alloc);
+    try writeNameList(self.supported_languages, &wr, alloc);
+    try writeNameList(self.supported_languages, &wr, alloc);
+    try wr.writeByte(0);
+    try wr.writeInt(u32, @intCast(0), .big);
+    log.info("written wr: \n{s}", .{try wr_allocating.toOwnedSlice()});
+    // log.info("written wr: \n{s}", .{try string.toOwnedSlice(wr_allocating.allocator)});
+    // try &wr.flush();
+    return "empty";
+}
+fn getCookie(cookie: *[16]u8) void {
     std.crypto.random.bytes(cookie);
 }
 
 fn writeNameList(name_list: types.NameList, writer: *IoWriter, alloc: Alloc) !void {
     const sendable_name_list = try name_list.getFormatSendableNameList(alloc);
-    try writer.writeInt(u32, sendable_name_list.len, .big);
+    try writer.writeInt(u32, @intCast(sendable_name_list.len), .big);
     try writer.writeAll(sendable_name_list);
 }
 
@@ -152,13 +178,19 @@ fn verifyClientVersion(client_ssh_protocol: []const u8, writer: *IoWriter) !void
 fn readPacket(reader: *IoReader, alloc: Alloc) !types.SshPacket {
     _ = alloc;
     var packetLengthArray: [4]u8 = undefined;
-    const readBytes = try reader.readSliceShort(&packetLengthArray);
-    std.debug.assert(readBytes == 4);
+    const read_bytes = try reader.readSliceShort(&packetLengthArray);
+    if (read_bytes != 4) {
+        log.err("Expected to read 4 bytes but read :{d}", .{read_bytes});
+        return error.ReadPacketWrongPacketFormat;
+    }
     const packetLength = std.mem.readInt(u32, &packetLengthArray, .big);
     log.info("Packet length gotten {d}\n", .{packetLength});
     const paddingLength = try reader.takeByte();
     log.info("Padding byte {d}", .{paddingLength});
-    std.debug.assert(paddingLength >= 4 and paddingLength <= 255);
+    if (paddingLength < 4 or paddingLength > 255) {
+        log.err("Padding byte is more than 255 or less than 4: Got {d}", .{paddingLength});
+        return error.ReadPacketWrongPaddingLength;
+    }
 
     const payloadLength = packetLength - paddingLength - 1;
     log.info("Payload length {d}", .{payloadLength});

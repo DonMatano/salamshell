@@ -48,6 +48,10 @@ pub const NameList = struct {
 
     pub fn getFormatSendableNameList(self: NameList, alloc: std.mem.Allocator) ![]const u8 {
         var list = try std.ArrayList(u8).initCapacity(alloc, 1028);
+        defer list.deinit(alloc);
+        if (self.names.len == 0) {
+            return "";
+        }
         for (self.names) |value| {
             try list.print(alloc, "{s},", .{value});
         }
