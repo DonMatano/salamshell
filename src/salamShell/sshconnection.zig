@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const message_handlers = @import("message_handlers.zig");
 const SSHServer = @import("server.zig");
+const BPP = @import("bpp.zig");
 const Alloc = std.mem.Allocator;
 const IoWriter = std.Io.Writer;
 const IoReader = std.Io.Reader;
@@ -56,15 +57,17 @@ pub fn handleConnection(
         return err;
     };
     try readClientVersion(reader, writer);
-    const kex_init_payload = try self.sendKexInit(writer, arenaAllocator);
+    const kex_init_payload = try self.getKexInitPayload(arenaAllocator);
     log.info("kex_init_payload: \n{s}", .{kex_init_payload});
+    try BPP.writeBPPPacket(writer, kex_init_payload, &self.packets_sent, arenaAllocator);
     while (true) {
-        const ssh = try readPacket(reader, arenaAllocator);
+        const ssh = try BPP.readBPPPacket(reader, &self.packets_received);
         std.log.debug("ssh: {f}", .{ssh});
         // First byte is the msg code.
         const ssh_message = try getSSHMessageFromPayload(ssh.payload[0]);
         var r = IoReader.fixed(ssh.payload[1..]);
         try self.handleMessage(ssh_message, &r, writer, arenaAllocator);
+        log.debug("Packets total received: {d}\n total Packets sent: {d}", .{ self.packets_received, self.packets_sent });
     }
 }
 fn readClientVersion(reader: *IoReader, writer: *IoWriter) !void {
@@ -84,42 +87,6 @@ fn getSSHMessageFromPayload(msg_byte: u8) !types.SSH_MSG {
     log.info("msg {s}", .{@tagName(mess)});
     return mess;
 }
-fn readPacket(reader: *IoReader, alloc: Alloc) !types.SshPacket {
-    _ = alloc;
-    var packetLengthArray: [4]u8 = undefined;
-    const read_bytes = try reader.readSliceShort(&packetLengthArray);
-    if (read_bytes != 4) {
-        log.err("Expected to read 4 bytes but read :{d}", .{read_bytes});
-        return error.ReadPacketWrongPacketFormat;
-    }
-    const packetLength = std.mem.readInt(u32, &packetLengthArray, .big);
-    log.info("Packet length gotten {d}\n", .{packetLength});
-    const paddingLength = try reader.takeByte();
-    log.info("Padding byte {d}", .{paddingLength});
-    if (paddingLength < 4 or paddingLength > 255) {
-        log.err("Padding byte is more than 255 or less than 4: Got {d}", .{paddingLength});
-        return error.ReadPacketWrongPaddingLength;
-    }
-
-    const payloadLength = packetLength - paddingLength - 1;
-    log.info("Payload length {d}", .{payloadLength});
-
-    // var payload: [payloadLength]u8 = undefined;
-
-    const payload = try reader.take(payloadLength);
-    log.info("payload {s}", .{payload});
-
-    const randomPadding = try reader.take(paddingLength);
-    log.info("random padding {s}", .{randomPadding});
-
-    // const rem = try reader.allocRemaining(alloc, .unlimited);
-    // log.info("rem {s}", .{rem});
-    return .{
-        .payload = payload,
-        .packet_length = packetLength,
-        .padding_length = paddingLength,
-    };
-}
 /// Handle a message. Reader should not include the message code
 fn handleMessage(self: *SSHConnection, message_code: types.SSH_MSG, reader: *IoReader, writer: *IoWriter, alloc: Alloc) !void {
     _ = self;
@@ -133,45 +100,28 @@ fn handleMessage(self: *SSHConnection, message_code: types.SSH_MSG, reader: *IoR
         else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }
 }
-fn sendKexInit(self: *SSHConnection, writer: *IoWriter, alloc: Alloc) ![]const u8 {
-    _ = writer;
+fn getKexInitPayload(self: *SSHConnection, alloc: Alloc) ![]const u8 {
     var wr_allocating = try IoWriter.Allocating.initCapacity(alloc, 4096);
     defer wr_allocating.deinit();
-    // errdefer string.deinit(alloc);
     var wr = &wr_allocating.writer;
     try wr.writeByte(@intCast(@intFromEnum(types.SSH_MSG.kexinit)));
     var cookie: [16]u8 = undefined;
     getCookie(&cookie);
-    std.log.debug("Adding cookies {s}", .{cookie});
     try wr.writeAll(&cookie);
-    std.log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_kex_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_host_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_encryption_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_encryption_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_mac_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_mac_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_compression_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_compression_algo, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_languages, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try writeNameList(self.server_info.supported_languages, wr, alloc);
-    log.debug("Just wrote {s}", .{wr_allocating.written()});
     try wr.writeByte(0);
     try wr.writeInt(u32, @intCast(0), .big);
     try wr.flush();
-    // log.info("written string: {s}\n", .{string.items});
     log.info("written wr: {s}: len {d}\n", .{ wr_allocating.written(), wr_allocating.written().len });
-    // log.info("written wr: \n{s}", .{try string.toOwnedSlice(wr_allocating.allocator)});
-    // try &wr.flush();
     return try wr_allocating.toOwnedSlice();
 }
 fn getCookie(cookie: *[16]u8) void {
