@@ -24,7 +24,7 @@ pub fn readBPPPacket(reader: *IoReader, in_packet_seq: *usize) !types.SshPacket 
         return error.ReadPacketWrongPaddingLength;
     }
     if (packetLength < paddingLength - 1) {
-        log.err("Invalid packet length, smaller than padding", .{packetLength});
+        log.err("Invalid packet length, smaller than padding: packet length: {d}", .{packetLength});
         return error.InvalidPacketLength;
     }
 

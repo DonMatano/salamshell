@@ -13,6 +13,11 @@ packets_received: usize = 0,
 packets_sent: usize = 0,
 arena: std.heap.ArenaAllocator,
 server_info: *SSHServer,
+supported_kex_algo: []const u8 = "",
+supported_host_algo: []const u8 = "",
+supported_encryption_algo: []const u8 = "",
+supported_mac_algo: []const u8 = "",
+supported_compression_algo: []const u8 = "none",
 
 const log = std.log.scoped(.SSHConnection);
 
@@ -58,11 +63,11 @@ pub fn handleConnection(
     };
     try readClientVersion(reader, writer);
     const kex_init_payload = try self.getKexInitPayload(arenaAllocator);
-    log.info("kex_init_payload: \n{s}", .{kex_init_payload});
+    log.debug("kex_init_payload: \n{s}", .{kex_init_payload});
     try BPP.writeBPPPacket(writer, kex_init_payload, &self.packets_sent, arenaAllocator);
     while (true) {
         const ssh = try BPP.readBPPPacket(reader, &self.packets_received);
-        std.log.debug("ssh: {f}", .{ssh});
+        log.debug("ssh: {f}", .{ssh});
         // First byte is the msg code.
         const ssh_message = try getSSHMessageFromPayload(ssh.payload[0]);
         var r = IoReader.fixed(ssh.payload[1..]);
@@ -83,23 +88,27 @@ fn verifyClientVersion(client_ssh_protocol: []const u8, writer: *IoWriter) !void
     }
 }
 fn getSSHMessageFromPayload(msg_byte: u8) !types.SSH_MSG {
-    const mess: types.SSH_MSG = @enumFromInt(msg_byte);
+    log.info("message code: {d}", .{msg_byte});
+    const mess = std.enums.fromInt(types.SSH_MSG, msg_byte) orelse {
+        log.err("Message code {d}, has not been handled yet", .{msg_byte});
+        return error.MessageCodeUnimplemented;
+    };
     log.info("msg {s}", .{@tagName(mess)});
     return mess;
 }
 /// Handle a message. Reader should not include the message code
 fn handleMessage(self: *SSHConnection, message_code: types.SSH_MSG, reader: *IoReader, writer: *IoWriter, alloc: Alloc) !void {
-    _ = self;
     _ = writer;
     switch (message_code) {
         .kexinit => {
             const kex_pay = try message_handlers.handleKexInit(reader, alloc);
-            log.info("Kex payload: \n{f}", .{kex_pay});
-            log.info("Client ex supported {s}", .{try kex_pay.kex_algorithms.getFormatSendableNameList(alloc)});
+            try self.setSupportedAlgos(kex_pay);
+            log.debug("supported kex algo {s}", .{self.supported_kex_algo});
         },
         else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }
 }
+
 fn getKexInitPayload(self: *SSHConnection, alloc: Alloc) ![]const u8 {
     var wr_allocating = try IoWriter.Allocating.initCapacity(alloc, 4096);
     defer wr_allocating.deinit();
@@ -121,8 +130,30 @@ fn getKexInitPayload(self: *SSHConnection, alloc: Alloc) ![]const u8 {
     try wr.writeByte(0);
     try wr.writeInt(u32, @intCast(0), .big);
     try wr.flush();
-    log.info("written wr: {s}: len {d}\n", .{ wr_allocating.written(), wr_allocating.written().len });
     return try wr_allocating.toOwnedSlice();
+}
+
+fn setSupportedAlgos(self: *SSHConnection, client_kex_payload: types.KexInitPayload) !void {
+    var selected_kex_payload: ?[]const u8 = null;
+    if (client_kex_payload.kex_algorithms.length <= 0) {
+        log.err("client kex algo list is empty", .{});
+        return error.SupportedAlgosEmptyList;
+    }
+    kex: for (client_kex_payload.kex_algorithms.names) |client_supported_algo| {
+        const name_list = try self.server_info.supported_kex_algo.getFormatSendableNameList(self.arenaAlloc());
+        var name_list_it = std.mem.splitScalar(u8, name_list, ',');
+        while (name_list_it.next()) |server_supported_algo| {
+            if (std.mem.eql(u8, client_supported_algo, server_supported_algo)) {
+                selected_kex_payload = server_supported_algo;
+                break :kex;
+            }
+        }
+    }
+    if (selected_kex_payload == null) {
+        log.err("Failed to get supported kex algo", .{});
+        return error.MissingSupportedKexAlgo;
+    }
+    self.supported_kex_algo = selected_kex_payload.?;
 }
 fn getCookie(cookie: *[16]u8) void {
     std.crypto.random.bytes(cookie);

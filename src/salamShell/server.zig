@@ -76,5 +76,7 @@ pub fn listen(self: *Server) !void {
 
 fn createSSHConnection(server: *Server, connection: *std.net.Server.Connection) !void {
     var ssh_connection = try SSHConnection.init(connection, server, server.alloc);
-    try ssh_connection.handleConnection();
+    ssh_connection.handleConnection() catch |err| {
+        log.err("Connection failed with an error of {}", .{err});
+    };
 }
