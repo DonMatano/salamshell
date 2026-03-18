@@ -14,10 +14,18 @@ pub fn readBPPPacket(reader: *IoReader, in_packet_seq: *usize) !types.SshPacket 
         return error.ReadPacketWrongPacketFormat;
     }
     const packetLength = std.mem.readInt(u32, &packetLengthArray, .big);
+    if (packetLength > 35000) {
+        log.err("Packet too large. Expected max 35kb but got {d}", .{packetLength});
+        return error.InvalidPacketLength; // packet length is 35k
+    }
     const paddingLength = try reader.takeByte();
     if (paddingLength < 4 or paddingLength > 255) {
         log.err("Padding byte is more than 255 or less than 4: Got {d}", .{paddingLength});
         return error.ReadPacketWrongPaddingLength;
+    }
+    if (packetLength < paddingLength - 1) {
+        log.err("Invalid packet length, smaller than padding", .{packetLength});
+        return error.InvalidPacketLength;
     }
 
     const payloadLength = packetLength - paddingLength - 1;

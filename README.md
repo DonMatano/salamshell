@@ -1,11 +1,7 @@
-# AI AGENT OVERVIEW
-> **NOTICE:** This file is intended to provide a high-level overview of the `salamShell` project for future AI agents. It summarizes the project goals, architecture, and current implementation status.
-
 # salamShell Project Overview
 
 ## Project Goal
-`salamShell` is a Work-In-Progress (WIP) SSH server implementation written in Zig 0.15.2.
-Its primary objective is to serve as a library for handling SSH connections, with a future goal of handling parsing of `.git` folders.
+`salamShell` is a Work-In-Progress (WIP) SSH server implementation written in Zig (0.15.2.)
 
 ## Technology Stack
 - **Language**: Zig 0.15.2
@@ -58,7 +54,6 @@ The project is in early development, focusing on the SSH handshake.
 - [ ] Host Key management.
 - [ ] User Authentication (password, public key).
 - [ ] Channel and Session management.
-- [ ] Git-specific functionality (parsing `.git` folders).
 
 ## Architectural Notes
 - **Memory Management**: The server uses a per-connection `ArenaAllocator` managed by the `SSHConnection` struct.

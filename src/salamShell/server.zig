@@ -66,20 +66,15 @@ pub fn listen(self: *Server) !void {
     const address = try net.Address.parseIp("127.0.0.1", self.port);
     var server = try address.listen(.{ .reuse_address = true });
     defer server.deinit();
-    // var stream = net.tcpConnectToAddress(address) catch |e| {
-    //     log.err("Failed to tcp connect to port {d}: {}", .{ self.port, e });
-    //     return e;
-    // };
     log.info("SSH server started and listening at port: {d}", .{self.port});
     while (true) {
         var conn = try server.accept();
-        // const thread = try std.Thread.spawn(.{}, createSSHConnection, .{ self, &conn });
-        // thread.detach();
-        try self.createSSHConnection(&conn);
+        const thread = try std.Thread.spawn(.{}, createSSHConnection, .{ self, &conn });
+        thread.detach();
     }
 }
 
 fn createSSHConnection(server: *Server, connection: *std.net.Server.Connection) !void {
-    var ssh_connection = try SSHConnection.init(connection, server, server.arenaAlloc());
+    var ssh_connection = try SSHConnection.init(connection, server, server.alloc);
     try ssh_connection.handleConnection();
 }
