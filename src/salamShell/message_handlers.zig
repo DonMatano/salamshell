@@ -22,3 +22,5 @@ pub fn handleKexInit(reader: *std.Io.Reader, alloc: std.mem.Allocator) !types.Ke
     // determine the keys and the session identifier.
     return try types.KexInitPayload.parse(reader, alloc);
 }
+
+pub fn handleKexDhInit(reader: *std.Io.Reader, kexAlgo: types.KexAlgos, alloc: std.mem.Allocator) !void {}

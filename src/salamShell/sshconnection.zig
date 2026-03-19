@@ -103,7 +103,14 @@ fn handleMessage(self: *SSHConnection, message_code: types.SSH_MSG, reader: *IoR
         .kexinit => {
             const kex_pay = try message_handlers.handleKexInit(reader, alloc);
             try self.setSupportedAlgos(kex_pay);
-            log.debug("supported kex algo {s}", .{self.supported_kex_algo});
+        },
+        .kexdh_init => {
+            const supported_kex = types.KexAlgos.getEnumFromString(self.supported_kex_algo);
+            if (supported_kex == .not_found) {
+                log.err("Got an unsupported kex algo, {s}", .{self.supported_kex_algo});
+                return error.KexAlgoUnsupported;
+            }
+            const kexdh = try message_handlers.handleKexDhInit(reader, supported_kex, alloc);
         },
         else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }

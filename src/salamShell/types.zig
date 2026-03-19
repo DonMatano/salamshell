@@ -12,6 +12,20 @@ pub const SshPacket = struct {
     }
 };
 
+pub const KexAlgos = enum {
+    mlkem_sha256,
+    not_found,
+
+    pub fn getEnumFromString(enumString: []const u8) KexAlgos {
+        const eql = std.mem.eql;
+        if (eql(u8, enumString, "mlkem768x25519-sha256")) {
+            return .mlkem_sha256;
+        } else {
+            return .not_found;
+        }
+    }
+};
+
 pub const NameList = struct {
     length: u32,
     names: []const []const u8,
@@ -71,6 +85,7 @@ pub const SSH_MSG = enum(u8) {
     service_accept = 6,
     kexinit = 20,
     newkeys = 21,
+    kexdh_init = 30,
     userauth_request = 50,
     userauth_failure = 51,
     userauth_success = 52,
