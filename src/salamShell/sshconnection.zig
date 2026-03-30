@@ -110,7 +110,8 @@ fn handleMessage(self: *SSHConnection, message_code: types.SSH_MSG, reader: *IoR
                 log.err("Got an unsupported kex algo, {s}", .{self.supported_kex_algo});
                 return error.KexAlgoUnsupported;
             }
-            const kexdh = try message_handlers.handleKexDhInit(reader, supported_kex, alloc);
+            log.debug("handling kex dh init", .{});
+            try message_handlers.handleKexDhInit(reader, supported_kex, alloc);
         },
         else => log.info("message: {d}. not yet handled.", .{@intFromEnum(message_code)}),
     }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types.zig");
+const KxAlgo = @import("kexAlgo.zig");
 const log = std.log.scoped(.MessageHandlers);
 
 /// KexInit has the following packet body
@@ -23,4 +24,13 @@ pub fn handleKexInit(reader: *std.Io.Reader, alloc: std.mem.Allocator) !types.Ke
     return try types.KexInitPayload.parse(reader, alloc);
 }
 
-pub fn handleKexDhInit(reader: *std.Io.Reader, kexAlgo: types.KexAlgos, alloc: std.mem.Allocator) !void {}
+pub fn handleKexDhInit(reader: *std.Io.Reader, kexAlgo: types.KexAlgos, alloc: std.mem.Allocator) !void {
+    switch (kexAlgo) {
+        .not_found => {
+            return error.KexAlgoNotFound;
+        },
+        .mlkem_sha256 => {
+            try KxAlgo.mlkem(reader, alloc);
+        },
+    }
+}
